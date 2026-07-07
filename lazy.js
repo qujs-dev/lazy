@@ -1,5 +1,5 @@
 ﻿/*!
- * Lazy loading component v1.0
+ * Lazy loading component v1.0.1
  *
  * @author Serge Galich <gaserge@mail.ru>
  * @copyright 2025
@@ -9,14 +9,15 @@
  * @requires Qu
  */
 
-(function(global) {
+(function (window, document) {
     'use strict';
+
     const LIB_NAME = 'Lazy';
     const DATA_PREFIX = 'qu-lazy';
     const QU_PREFIX = 'qu';
 
-    if (global.Qu && global.Qu[LIB_NAME]) {
-        global.Qu.debug(`⚠️ [${LIB_NAME}] Already registered, skipping duplicate`);
+    if (window.Qu && window.Qu[LIB_NAME]) {
+        window.Qu.debug(`⚠️ [${LIB_NAME}] Already registered, skipping duplicate`);
         return;
     }
 
@@ -24,7 +25,7 @@
     
     const Module = {
         name: LIB_NAME,
-        _debug: false, // по умолчанию true
+        _debug: false,
         _initOnce: false,
 
         _imgObserver: null,
@@ -102,11 +103,11 @@
         },
 
         extend: function () {
-            if (Array.isArray(global[LIB_NAME + 'Extend'])) {
-              global[LIB_NAME + 'Extend'].forEach((fn) => {
-                this.use(fn);
-              });
-              global[LIB_NAME + 'Extend'] = [];
+            if (Array.isArray(window[LIB_NAME + 'Extend'])) {
+                window[LIB_NAME + 'Extend'].forEach((fn) => {
+                    this.use(fn);
+                });
+                window[LIB_NAME + 'Extend'] = [];
             }
         },
 
@@ -155,7 +156,6 @@
             });
         },
 
-        
         _unobserveElement: function(el) {
             if (this._imgCallbacks.has(el)) {
                 this._imgObserver.unobserve(el);
@@ -176,7 +176,6 @@
             this.config(params);
         },
 
-        
         _createImgObserver: function() {
             if (this._imgObserver) return;
             this._imgObserver = new IntersectionObserver((entries) => {
@@ -219,7 +218,6 @@
             });
         },
 
-        
         _getElementConfig: function(el) {
             const config = {
                 threshold: this._config.threshold,
@@ -326,14 +324,13 @@
                 .filter(Boolean);
         },
 
-        
         initLazyWithObserver: function() {
             if (!this._imgObserver) return;
             const lazyImages = document.querySelectorAll(this._config.selector);
             lazyImages.forEach(img => {
                 const elConfig = this._getElementConfig(img);
                 if (img.classList.contains(elConfig.loadedClass)) return;
-                if (this._imgCallbacks.has(img)) return; // уже наблюдается
+                if (this._imgCallbacks.has(img)) return;
 
                 const callback = (entry) => {
                     if (!entry.isIntersecting) return;
@@ -462,7 +459,6 @@
             });
         },
 
-        
         initAssetsFallback: function() {
             const blocks = document.querySelectorAll('[data-qu-lazy-css], [data-qu-lazy-js]');
             blocks.forEach(el => {
@@ -566,11 +562,11 @@
         }
     };
 
-    if (global.Qu) {
-        global.Qu.lib(LIB_NAME, Module);
+    if (window.Qu) {
+        window.Qu.lib(LIB_NAME, Module);
     } else {
-        global._QuLibs = global._QuLibs || [];
-        global._QuLibs.push({ name: LIB_NAME, instance: Module });
+        window._QuLibs = window._QuLibs || [];
+        window._QuLibs.push({ name: LIB_NAME, instance: Module });
     }
 
-})(typeof window !== 'undefined' ? window : global);
+})(window, document);
