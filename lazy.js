@@ -1,5 +1,5 @@
 ﻿/*!
- * Lazy loading component v1.0.1
+ * Lazy loading component v1.0.2
  *
  * @author Serge Galich <gaserge@mail.ru>
  * @copyright 2025
@@ -144,11 +144,12 @@
                             node.querySelectorAll('*').forEach((child) => this._unobserveElement(child));
                         }
                     });
-                    if (mutation.addedNodes.length) {
-                        if (this._imgObserver) this.initLazyWithObserver();
-                        if (this._bgObserver) this.initRepeatPatternsWithObserver();
-                        if (this._assetObserver) this.initAssetsWithObserver();
-                    }
+                    mutation.addedNodes.forEach(node => {
+                        if (node.nodeType !== 1) return;
+                        if (this._imgObserver) this.initLazyWithObserver(node);
+                        if (this._bgObserver) this.initRepeatPatternsWithObserver(node);
+                        if (this._assetObserver) this.initAssetsWithObserver(node);
+                    });
                 });
             }).observe(document.body, {
                 childList: true,
@@ -324,9 +325,12 @@
                 .filter(Boolean);
         },
 
-        initLazyWithObserver: function() {
+        initLazyWithObserver: function(root) {
             if (!this._imgObserver) return;
-            const lazyImages = document.querySelectorAll(this._config.selector);
+            const scope = root || document;
+            const lazyImages = [];
+            if (scope.nodeType === 1 && scope.matches(this._config.selector)) lazyImages.push(scope);
+            scope.querySelectorAll(this._config.selector).forEach(i => lazyImages.push(i));
             lazyImages.forEach(img => {
                 const elConfig = this._getElementConfig(img);
                 if (img.classList.contains(elConfig.loadedClass)) return;
@@ -356,9 +360,12 @@
             });
         },
 
-        initRepeatPatternsWithObserver: function() {
+        initRepeatPatternsWithObserver: function(root) {
             if (!this._bgObserver) return;
-            const patterns = document.querySelectorAll(this._config.repeatSelector);
+            const scope = root || document;
+            const patterns = [];
+            if (scope.nodeType === 1 && scope.matches(this._config.repeatSelector)) patterns.push(scope);
+            scope.querySelectorAll(this._config.repeatSelector).forEach(i => patterns.push(i));
             patterns.forEach(el => {
                 const elConfig = this._getElementConfig(el);
                 if (el.classList.contains(elConfig.loadedClass)) return;
@@ -407,9 +414,13 @@
             });
         },
 
-        initAssetsWithObserver: function() {
+        initAssetsWithObserver: function(root) {
             if (!this._assetObserver) return;
-            const blocks = document.querySelectorAll('[data-qu-lazy-css], [data-qu-lazy-js]');
+            const selector = '[data-qu-lazy-css], [data-qu-lazy-js]';
+            const scope = root || document;
+            const blocks = [];
+            if (scope.nodeType === 1 && scope.matches(selector)) blocks.push(scope);
+            scope.querySelectorAll(selector).forEach(i => blocks.push(i));
             blocks.forEach(el => {
                 const elConfig = this._getElementConfig(el);
                 if (el.classList.contains(elConfig.assetLoadedClass)) return;
