@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * Lazy loading component v1.0.2
  *
  * @author Serge Galich <gaserge@mail.ru>
