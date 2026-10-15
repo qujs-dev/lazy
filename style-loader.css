@@ -1,8 +1,11 @@
 
-img[loading="lazy"]:not(.no-lazyloaded):not([data-qu-animation-open]) {
+img[loading="lazy"]:not(.lazyloaded):not(.no-lazyloaded):not([data-qu-animation-open]) {
     opacity: 0;
-    transition: opacity var(--qu-transition-duration) var(--qu-transition-func);
 }
-img[loading="lazy"].lazyloaded {
-    opacity: 1 !important;
+img[loading="lazy"].lazyloaded:not(.no-lazyloaded) {
+    animation: lazyFadeIn var(--qu-transition-duration) var(--qu-transition-func) both;
+}
+@keyframes lazyFadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
 }

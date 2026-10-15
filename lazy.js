@@ -1,5 +1,5 @@
 /*!
- * Lazy loading component v1.0.4
+ * Lazy loading component v1.0.5
  *
  * @author Serge Galich <gaserge@mail.ru>
  * @copyright 2025
@@ -135,7 +135,13 @@
 
             if (this._config.useVisibilityCheck && 'IntersectionObserver' in window) {
                 this._useObserver = true;
-                this.initLazyWithObserver();
+            
+                // Изображения: нативный loading="lazy" сам грузит,
+                // Qu.Lazy только ловит событие load и анимирует.
+                // IO для img НЕ вешаем — на 800 картинок это давало двойную нагрузку.
+                this.initLazyImageLoad();
+            
+                // Остальное — как было, там IO нужен
                 this.initRepeatPatternsWithObserver();
                 this.initAssetsWithObserver();
                 this.initBlocksWithObserver();
@@ -154,10 +160,11 @@
                             node.querySelectorAll('*').forEach((child) => this._unobserveElement(child));
                         }
                     });
+
                     mutation.addedNodes.forEach(node => {
                         if (node.nodeType !== 1) return;
                         if (!this._useObserver) return;
-                        this.initLazyWithObserver(node);
+                        this.initLazyImageLoad(node);
                         this.initRepeatPatternsWithObserver(node);
                         this.initAssetsWithObserver(node);
                         this.initBlocksWithObserver(node);
@@ -165,6 +172,76 @@
                 });
             }).observe(document.body, { childList: true, subtree: true });
         },
+
+        initLazyImageLoad: function(root) {
+            const scope = root || document;
+            const lazyImages = [];
+            if (scope.nodeType === 1 && scope.matches(this._config.selector)) lazyImages.push(scope);
+            scope.querySelectorAll(this._config.selector).forEach(i => lazyImages.push(i));
+        
+            const self = this;
+        
+            // Один IO на всю библиотеку — только для отслеживания видимости.
+            // Никаких settle, pending, _onIntersect — просто «увидел → анимировал».
+            if (!this._visIO) {
+                this._visIO = new IntersectionObserver((entries) => {
+                    for (const entry of entries) {
+                        if (!entry.isIntersecting) continue;
+                        const img = entry.target;
+        
+                        // Картинка загружена? Анимируем и отписываемся.
+                        if (img._quLazyLoaded) {
+                            self._visIO.unobserve(img);
+                            self._playImage(img);
+                        } else {
+                            // Ещё не загружена — пометим, что ждём видимости
+                            img._quWantAnim = true;
+                        }
+                    }
+                }, { rootMargin: '100px 0px 100px 0px' });
+            }
+        
+            lazyImages.forEach(img => {
+                if (img._quLazyWired) return;
+                img._quLazyWired = true;
+                this._prepareAnimation(img);
+        
+                // Сразу ставим под наблюдение IO
+                this._visIO.observe(img);
+        
+                const onLoad = () => {
+                    if (img._quLazyLoaded) return;
+                    img._quLazyLoaded = true;
+        
+                    // Если IO уже сказал «видимо» — анимируем сразу
+                    if (img._quWantAnim) {
+                        self._visIO.unobserve(img);
+                        self._playImage(img);
+                    }
+                    // Иначе — ждём, когда IO сообщит о видимости
+                };
+        
+                if (img.complete && img.src) onLoad();
+                else {
+                    img.addEventListener('load', onLoad, { once: true });
+                    img.addEventListener('error', onLoad, { once: true });
+                }
+            });
+        },
+        
+        _playImage: function(img) {
+            if (img._quAnimated) return;
+            img._quAnimated = true;
+        
+            const elConfig = this._getElementConfig(img);
+            this._finish(img, elConfig);
+        
+            if (elConfig.fireEventOnLoad) {
+                Qu.trigger(img, 'qu:lazy:imageloaded', { detail: { element: img, config: elConfig } });
+            }
+        },
+
+        
 
         _unobserveElement: function(el) {
             const obs = this._elObservers && this._elObservers.get(el);
@@ -224,99 +301,16 @@
 
         _resolveDuration: function(el, action) {
             if (this._config.animationDuration != null) return this._config.animationDuration;
-
-            if (!this._durationCache) this._durationCache = new Map();
-
-            const name = el.getAttribute(action === 'open' ? ANIM_ATTR : CLOSE_ATTR) || '';
-            const key = action + '|' + name;
-            if (this._durationCache.has(key)) return this._durationCache.get(key);
-
-            const cs = getComputedStyle(el);
-            let maxMs = 0;
-
-            const td = cs.transitionDuration;
-            if (td && td !== 'none') {
-                for (const s of td.split(',')) {
-                    const t = s.trim();
-                    const ms = parseFloat(t) * (t.endsWith('ms') ? 1 : 1000);
-                    if (isFinite(ms) && ms > maxMs) maxMs = ms;
-                }
-            }
-
-            const ad = cs.animationDuration;
-            if (ad && ad !== 'none') {
-                for (const s of ad.split(',')) {
-                    const t = s.trim();
-                    const ms = parseFloat(t) * (t.endsWith('ms') ? 1 : 1000);
-                    if (isFinite(ms) && ms > maxMs) maxMs = ms;
-                }
-            }
-
-            if (!maxMs || maxMs < 50) maxMs = 400;
-
-            this._durationCache.set(key, maxMs);
-            return maxMs;
-        },
-
-        _resolveDuration: function(el, action) {
-            if (this._config.animationDuration != null) return this._config.animationDuration;
             if (!this._durationCache) this._durationCache = new Map();
         
             const name = el.getAttribute(action === 'open' ? ANIM_ATTR : CLOSE_ATTR) || '';
+        
+            // Кэш по (action|name) — БЕЗ stagger.
+            // Один замер на каждую пару «анимация+направление» вместо замера на каждый элемент.
             const key = action + '|' + name;
             if (this._durationCache.has(key)) return this._durationCache.get(key);
         
             const cs = getComputedStyle(el);
-            let maxMs = 0;
-        
-            const td = cs.transitionDuration;
-            if (td && td !== 'none') {
-                for (const s of td.split(',')) {
-                    const t = s.trim();
-                    const ms = parseFloat(t) * (t.endsWith('ms') ? 1 : 1000);
-                    if (isFinite(ms) && ms > maxMs) maxMs = ms;
-                }
-            }
-        
-            const ad = cs.animationDuration;
-            if (ad && ad !== 'none') {
-                for (const s of ad.split(',')) {
-                    const t = s.trim();
-                    const ms = parseFloat(t) * (t.endsWith('ms') ? 1 : 1000);
-                    if (isFinite(ms) && ms > maxMs) maxMs = ms;
-                }
-            }
-        
-            // ← НОВОЕ: учитываем animation-delay
-            const dl = cs.animationDelay;
-            if (dl && dl !== 'none') {
-                let delayMax = 0;
-                for (const s of dl.split(',')) {
-                    const t = s.trim();
-                    const ms = parseFloat(t) * (t.endsWith('ms') ? 1 : 1000);
-                    if (isFinite(ms) && ms > delayMax) delayMax = ms;
-                }
-                maxMs += delayMax;
-            }
-        
-            if (!maxMs || maxMs < 50) maxMs = 400;
-            this._durationCache.set(key, maxMs);
-            return maxMs;
-        },
-
-        _resolveDuration: function(el, action) {
-            if (this._config.animationDuration != null) return this._config.animationDuration;
-            if (!this._durationCache) this._durationCache = new Map();
-        
-            const name = el.getAttribute(action === 'open' ? ANIM_ATTR : CLOSE_ATTR) || '';
-            const cs = getComputedStyle(el);
-        
-            // КЛЮЧЕВОЕ: stagger у каждого элемента свой → он обязан быть в ключе
-            const staggerVar = action === 'open' ? '--qua-stagger-open' : '--qua-stagger-close';
-            const stagger = cs.getPropertyValue(staggerVar).trim() || '0s';
-            const key = action + '|' + name + '|' + stagger;
-        
-            if (this._durationCache.has(key)) return this._durationCache.get(key);
         
             let maxMs = 0;
         
@@ -442,119 +436,51 @@ _animDone: function(el, action) {
          *  INTERSECT + SETTLE
          * ============================================================ */
 
-_onIntersect: function(el, entry, loadFn) {
-    const st = this._getState(el);
-    st.lastIsIn = entry.isIntersecting;
 
-    const immediate = this._getData(el, 'immediate') !== null
-        ? this._getData(el, 'immediate') !== 'false'
-        : this._config.immediateAnimation;
+        _onIntersect: function(el, entry, loadFn) {
+            const st = this._getState(el);
+            st.lastIsIn = entry.isIntersecting;
 
-    clearTimeout(st.settleTimer);
-    st.settleTimer = setTimeout(
-        () => this._settle(el, loadFn),
-        immediate ? 0 : this._config.settleDelay
-    );
-},
-/* 
-_onIntersect: function(el, entry, loadFn) {
-    const st = this._getState(el);
-    st.lastIsIn = entry.isIntersecting;
+            const immediate = this._getData(el, 'immediate') !== null
+                ? this._getData(el, 'immediate') !== 'false'
+                : this._config.immediateAnimation;
 
-    const immediate = this._getData(el, 'immediate') !== null
-        ? this._getData(el, 'immediate') !== 'false'
-        : this._config.immediateAnimation;
+            // антидребезг обязателен, даже когда immediate=true
+            const delay = immediate
+                ? (this._config.immediateDelay || 120)
+                : this._config.settleDelay;
 
-    // антидребезг нужен всегда — иначе на границе IO стреляет десятки раз в секунду
-    // при immediate просто чуть меньше задержка
-    const delay = immediate
-        ? (this._config.immediateDelay || 120)
-        : this._config.settleDelay;
+            clearTimeout(st.settleTimer);
+            st.settleTimer = setTimeout(() => this._settle(el, loadFn), delay);
+        },
 
-    clearTimeout(st.settleTimer);
-    st.settleTimer = setTimeout(() => this._settle(el, loadFn), delay);
-}, */
+        _settle: function(el, loadFn) {
+            const st = this._getState(el);
+            const isIn = st.lastIsIn;
 
-_onIntersect: function(el, entry, loadFn) {
-    const st = this._getState(el);
-    st.lastIsIn = entry.isIntersecting;
-
-    const immediate = this._getData(el, 'immediate') !== null
-        ? this._getData(el, 'immediate') !== 'false'
-        : this._config.immediateAnimation;
-
-    // антидребезг обязателен, даже когда immediate=true
-    const delay = immediate
-        ? (this._config.immediateDelay || 120)
-        : this._config.settleDelay;
-
-    clearTimeout(st.settleTimer);
-    st.settleTimer = setTimeout(() => this._settle(el, loadFn), delay);
-},
-
-_settle: function(el, loadFn) {
-    const st = this._getState(el);
-    const isIn = st.lastIsIn;
-
-    // per-element: data-qu-lazy-immediate, иначе — из конфига
-    const immediate = this._getData(el, 'immediate') !== null
-        ? this._getData(el, 'immediate') !== 'false'
-        : this._config.immediateAnimation;
-
-    // если идёт анимация
-    if (st.animState !== 'idle') {
-        if (!immediate) {
-            // старое поведение: ждём окончания, потом играем pending
-            const want = isIn ? 'open' : 'close';
-            if (st.animState !== want) {
-                st.pending = want;
-            } else {
-                st.pending = null;
+            // Анимация идёт — не прерываем её ни при каком immediate.
+            // Просто запоминаем, что нужно доиграть после.
+            if (st.animState !== 'idle') {
+                const want = isIn ? 'open' : 'close';
+                if (st.animState !== want) {
+                    st.pending = want;
+                } else {
+                    st.pending = null;
+                }
+                return;
             }
-            return;
-        }
-        // immediate: не выходим, идём переключать анимацию прямо сейчас
-    }
 
-    if (isIn) {
-        if (el._quLazyLoaded) {
-            this._animate(el, 'open');
-        } else if (!el._quLazyLoading && loadFn) {
-            el._quLazyLoading = true;
-            loadFn();
-        }
-    } else if (el.hasAttribute(CLOSE_ATTR) && el.hasAttribute(OPENING_ATTR)) {
-        this._animate(el, 'close');
-    }
-},
-
-_settle: function(el, loadFn) {
-    const st = this._getState(el);
-    const isIn = st.lastIsIn;
-
-    // Анимация идёт — не прерываем её ни при каком immediate.
-    // Просто запоминаем, что нужно доиграть после.
-    if (st.animState !== 'idle') {
-        const want = isIn ? 'open' : 'close';
-        if (st.animState !== want) {
-            st.pending = want;
-        } else {
-            st.pending = null;
-        }
-        return;
-    }
-
-    if (isIn) {
-        if (el._quLazyLoaded) {
-            this._animate(el, 'open');
-        } else if (!el._quLazyLoading && loadFn) {
-            el._quLazyLoading = true;
-            loadFn();
-        }
-    } else if (el.hasAttribute(CLOSE_ATTR) && el.hasAttribute(OPENING_ATTR)) {
-        this._animate(el, 'close');
-    }
-},
+            if (isIn) {
+                if (el._quLazyLoaded) {
+                    this._animate(el, 'open');
+                } else if (!el._quLazyLoading && loadFn) {
+                    el._quLazyLoading = true;
+                    loadFn();
+                }
+            } else if (el.hasAttribute(CLOSE_ATTR) && el.hasAttribute(OPENING_ATTR)) {
+                this._animate(el, 'close');
+            }
+        },
 
         _unobserveIfDone: function(el) {
             if (el.hasAttribute(CLOSE_ATTR)) return; // следим дальше
